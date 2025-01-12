@@ -17,6 +17,7 @@ Default photo filename on Pixel phones: PXL_20240423_084532187.jpg (len: 26)
 Author: oxben@free.fr
 """
 
+from itertools import islice
 import os
 import re
 import shutil
@@ -30,6 +31,10 @@ ADB_PATH = r"C:\Apps\android-platform-tools-2407"
 
 # Android default camera photos path
 ANDROID_DCIM_PATH = "/sdcard/DCIM/Camera"
+
+# Debug mode
+DEBUG=True
+
 
 #-------------------------------------------------------------------------------
 
@@ -46,19 +51,20 @@ def main():
     sync_dir = sys.argv[3]
 
     banner("PyPhotoFinder")
-    finder = PyPhotoFinder(src_dir, dst_dir, sync_dir)
-    #finder.parse_reference_tree()
+    android = AndroidDevice(debug=DEBUG)
+    finder = PyPhotoFinder(src_dir, dst_dir, sync_dir, android, debug=DEBUG)
+    finder.parse_reference_tree()
+    finder.list_android_photos()
+    finder.find_missing_android_photos()
     #finder.parse_import_tree()
 
-    android = AndroidDevice(True)
+    # android_photos = android.list_photos()
+    # banner(f"Android Photos: {len(android_photos)}")
+    # print(f"{android_photos[0]}\n{android_photos[1]}")
 
-    android_photos = android.list_android_photos()
-    banner(f"Android Photos: {len(android_photos)}")
-    print(f"{android_photos[0]}\n{android_photos[1]}")
-
-    android_photos = android.stat_android_photos()
-    banner(f"Android Photos and Sizes: {len(android_photos)}")
-    print(f"{android_photos[0]}\n{android_photos[1]}")
+    # android_photos = android.stat_photos()
+    # banner(f"Android Photos and Sizes: {len(android_photos)}")
+    # print(f"{android_photos[0]}\n{android_photos[1]}")
 
 
 #-------------------------------------------------------------------------------
@@ -73,11 +79,28 @@ def banner(str):
 
 class PyPhotoFinder:
 
-    def __init__(self, src_dir, dst_dir, sync_dir):
+    IDX_NAME = 0
+    IDX_SIZE = 1
+
+    def __init__(self, src_dir, dst_dir, sync_dir, android_device, debug=False):
         self._src_dir = src_dir
         self._dst_dir = dst_dir
         self._sync_dir = sync_dir
-        self._dst_photos = {}  # key: basename value: (fullname, size)
+        self._dst_photos = {}  # Dict key: basename value: (fullname, size)
+        self._android_device = android_device
+        self._android_photos = [] # List of tuples (fullname, size)
+        self._debug = debug
+
+
+    def list_android_photos(self):
+        '''
+        List all photos from the Android device and get their size
+        '''
+        banner("List Android photos")
+        self._android_photos = self._android_device.stat_photos(ANDROID_DCIM_PATH)
+        print(f"Android photos: {len(self._android_photos)}")
+        print("\n".join(map(str, self._android_photos[:4])))
+
 
     def pull_android_photos_to_src_dir():
         '''
@@ -88,10 +111,44 @@ class PyPhotoFinder:
         # Pull photo if it is absent from the synched directory
         pass
 
+
+    def find_missing_android_photos(self):
+        '''
+        List photos that are present on the Android device but not in the destination directory
+        '''
+        banner("Find missing Android photos")
+
+        print("\n".join(map(str, islice(self._dst_photos.items(), 4))))
+
+        start_time = time.time()
+        missing_photos = {}
+        diff_size_photos = {}
+        for photo in self._android_photos:
+            basename = os.path.basename(photo[self.IDX_NAME])
+            size = int(photo[self.IDX_SIZE])
+            if basename in self._dst_photos:
+                found = False
+                for dst_photo in self._dst_photos[basename]:
+                    if dst_photo[self.IDX_SIZE] == size:
+                        found = True
+                if not found:
+                    diff_size_photos[basename] = photo
+            else:
+                missing_photos[basename] = photo
+        end_time = time.time()
+
+        if self._debug:
+            print(f"Elapsed time: {end_time - start_time:.3f} seconds")
+        print(f"Missing photos: {len(missing_photos)}")
+        print(f"Photos with non-matching size: {len(diff_size_photos)}")
+
+        return missing_photos
+
+
     def parse_reference_tree(self):
         '''
-        Parse reference tree which is also the destination directory where the photos should be stored
-        at the end.
+        Parse reference tree which is also the destination directory where the photos should be
+        stored at the end.
         '''
         banner("Parse reference directory")
         parsed_dirs = 0
@@ -213,7 +270,7 @@ class AndroidDevice:
         return result.stdout
 
 
-    def list_android_photos(self, remote_path='/sdcard/DCIM/Camera'):
+    def list_photos(self, remote_path='/sdcard/DCIM/Camera'):
         '''
         List all photos (jpg and mp4) in the specified directory and its subdirectories
         of an Android device
@@ -226,7 +283,7 @@ class AndroidDevice:
         return result.splitlines()  # Return as a list of file paths
 
 
-    def stat_android_photos(self, remote_path='/sdcard/DCIM/Camera'):
+    def stat_photos(self, remote_path='/sdcard/DCIM/Camera'):
         '''
         Use stat command to list all photos contained under the specified directory
         of an Android device and get their size
@@ -239,7 +296,7 @@ class AndroidDevice:
         return files_and_sizes  # Return as a list of tuples (filename, size_in_bytes)
 
 
-    def copy_file_from_android(self, src, dst):
+    def copy_file_from_device(self, src, dst):
         '''Copy the specified src file from the Android device to the dst directory'''
         command = ['adb', 'pull', src, dst]
         result = subprocess.run(command, capture_output=True, text=True)
