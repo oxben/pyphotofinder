@@ -8,9 +8,12 @@
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 
+# Android Debug Bridge path
+ADB_PATH = r"C:\Apps\android-platform-tools-2407"
 
 #-------------------------------------------------------------------------------
 
@@ -28,8 +31,12 @@ def main():
 
     banner("PyPhotoFinder")
     finder = PyPhotoFinder(src_dir, dst_dir, sync_dir)
-    finder.parse_reference_tree()
-    finder.parse_import_tree()
+    #finder.parse_reference_tree()
+    #finder.parse_import_tree()
+
+    android_photos = list_android_photos()
+    banner("Android Photos: " + str(len(android_photos)))
+    print(android_photos[0])
 
 
 #-------------------------------------------------------------------------------
@@ -50,6 +57,14 @@ class PyPhotoFinder:
         self._sync_dir = sync_dir
         self._dst_photos = {}
 
+    def pull_android_photos_to_src_dir():
+        '''
+        Pull photos from the Android device to the source directory on the PC
+        '''
+        # List all Android photos
+        # For each photo check if it is already present in the synched directory
+        # Pull photo if it is absent from the synched directory
+        pass
 
     def parse_reference_tree(self):
         '''
@@ -64,7 +79,7 @@ class PyPhotoFinder:
             print(root)
             parsed_dirs += 1
             for name in files:
-                if name.lower().endswith(".jpg"):
+                if name.lower()[-4:] in (".jpg", ".mp4"):
                     path = os.path.join(root, name)
                     size = os.stat(path).st_size
                     if name in self._dst_photos.keys():
@@ -132,6 +147,37 @@ class PyPhotoFinder:
         print(f"{files_present} files matched")
         print(f"{files_missing} files missing from {self._dst_dir}")
 
+
+#-------------------------------------------------------------------------------
+
+def add_adb_to_path():
+    '''Add the directory containing adb.exe to the PATH'''
+    original_path = os.environ['PATH']
+    if not ADB_PATH in original_path:
+        os.environ['PATH'] = ADB_PATH + ";" + original_path  # Temporarily modify PATH
+
+
+def list_android_photos(remote_path='/sdcard/DCIM/Camera'):
+    '''List all photos contained under the specified directory on an Android device'''
+    add_adb_to_path()
+    # Use adb to list all image files (jpg, png, etc.) in the specified directory and its subdirectories
+    command = ['adb', 'shell', 'find', remote_path, '-type', 'f', '-name', '*.jpg', '-o', '-name', '*.mp4']
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        print("ERROR: " + result.stderr)
+        return []
+
+    return result.stdout.splitlines()  # Return as a list of file paths
+
+
+def copy_file_from_android(src, dst):
+    '''Copy the specified src file from the Android device to the dst directory'''
+    add_adb_to_path()
+    # Use adb to pull the specified file from the Android device
+    command = ['adb', 'pull', src, dst]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        print("ERROR: " + result.stderr)
 
 #-------------------------------------------------------------------------------
 
