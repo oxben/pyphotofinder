@@ -86,7 +86,7 @@ class PyPhotoFinder:
         self._src_dir = src_dir
         self._dst_dir = dst_dir
         self._sync_dir = sync_dir
-        self._dst_photos = {}  # Dict key: basename value: (fullname, size)
+        self._dst_photos = {}  # Dict key: basename value: [(fullname, size), ...]
         self._android_device = android_device
         self._android_photos = [] # List of tuples (fullname, size)
         self._debug = debug
@@ -140,6 +140,7 @@ class PyPhotoFinder:
         if self._debug:
             print(f"Elapsed time: {end_time - start_time:.3f} seconds")
         print(f"Missing photos: {len(missing_photos)}")
+        print("\n".join(map(str, islice(missing_photos.items(), 4))))
         print(f"Photos with non-matching size: {len(diff_size_photos)}")
 
         return missing_photos
