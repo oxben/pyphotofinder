@@ -1,9 +1,21 @@
 #!/usr/bin/python3
 
-#
-# Find files from src_dir not present in dst_dir and move them to synched_dir
-# python .\pyphotofinder.py E:\SyncPhonePhotos\PhotosPixel4a\ D:\Photos\ E:\SyncPhonePhotos\synched\
-#
+"""
+Script to synchronize photos from two directories or from an Android device
+and a directory.
+
+Find files from src_dir not present in dst_dir and move them to synched_dir
+python .\pyphotofinder.py E:\SyncPhonePhotos\PhotosPixel4a\ D:\Photos\ E:\SyncPhonePhotos\synched\
+
+Android Debug Bridge is used to retrieve the files from the Android device:
+- Doc: https://developer.android.com/tools/adb?hl=en
+Shell commands supported by ADB mainly comes from Toybox:
+- http://landley.net/toybox/status.html
+
+Default photo filename on Pixel phones: PXL_20240423_084532187.jpg (len: 26)
+
+Author: oxben@free.fr
+"""
 
 import os
 import re
@@ -12,8 +24,12 @@ import subprocess
 import sys
 import time
 
+
 # Android Debug Bridge path
 ADB_PATH = r"C:\Apps\android-platform-tools-2407"
+
+# Android default camera photos path
+ANDROID_DCIM_PATH = "/sdcard/DCIM/Camera"
 
 #-------------------------------------------------------------------------------
 
@@ -34,9 +50,15 @@ def main():
     #finder.parse_reference_tree()
     #finder.parse_import_tree()
 
-    android_photos = list_android_photos()
-    banner("Android Photos: " + str(len(android_photos)))
-    print(android_photos[0])
+    android = AndroidDevice(True)
+
+    android_photos = android.list_android_photos()
+    banner(f"Android Photos: {len(android_photos)}")
+    print(f"{android_photos[0]}\n{android_photos[1]}")
+
+    android_photos = android.stat_android_photos()
+    banner(f"Android Photos and Sizes: {len(android_photos)}")
+    print(f"{android_photos[0]}\n{android_photos[1]}")
 
 
 #-------------------------------------------------------------------------------
@@ -55,7 +77,7 @@ class PyPhotoFinder:
         self._src_dir = src_dir
         self._dst_dir = dst_dir
         self._sync_dir = sync_dir
-        self._dst_photos = {}
+        self._dst_photos = {}  # key: basename value: (fullname, size)
 
     def pull_android_photos_to_src_dir():
         '''
@@ -150,34 +172,79 @@ class PyPhotoFinder:
 
 #-------------------------------------------------------------------------------
 
-def add_adb_to_path():
-    '''Add the directory containing adb.exe to the PATH'''
-    original_path = os.environ['PATH']
-    if not ADB_PATH in original_path:
-        os.environ['PATH'] = ADB_PATH + ";" + original_path  # Temporarily modify PATH
+class AndroidDevice:
+    '''
+    Class used to execute command on Android device
+    '''
+
+    def __init__(self, debug=False):
+        '''Constructor'''
+        self._debug = debug
+        self.add_adb_to_path()
 
 
-def list_android_photos(remote_path='/sdcard/DCIM/Camera'):
-    '''List all photos contained under the specified directory on an Android device'''
-    add_adb_to_path()
-    # Use adb to list all image files (jpg, png, etc.) in the specified directory and its subdirectories
-    command = ['adb', 'shell', 'find', remote_path, '-type', 'f', '-name', '*.jpg', '-o', '-name', '*.mp4']
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        print("ERROR: " + result.stderr)
-        return []
-
-    return result.stdout.splitlines()  # Return as a list of file paths
+    def add_adb_to_path(self):
+        '''Add the directory containing adb.exe to the PATH'''
+        original_path = os.environ['PATH']
+        if not ADB_PATH in original_path:
+            os.environ['PATH'] = ADB_PATH + ";" + original_path  # Temporarily modify PATH
 
 
-def copy_file_from_android(src, dst):
-    '''Copy the specified src file from the Android device to the dst directory'''
-    add_adb_to_path()
-    # Use adb to pull the specified file from the Android device
-    command = ['adb', 'pull', src, dst]
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        print("ERROR: " + result.stderr)
+    def execute_shell_command(self, command_line):
+        '''
+        Execute Android shell command via ADB.
+        Shell command passed in must not contains spaces in the argument values (eg. in paths)
+        Return stdout content when command succeeds, None otherwise
+        '''
+        if self._debug:
+            banner(f"Executing command: {command_line}")
+        command = ['adb', 'shell'] + command_line.split(' ')
+        print(command)
+
+        start_time = time.time()
+        result = subprocess.run(command, capture_output=True, text=True)
+        end_time = time.time()
+
+        if result.returncode != 0:
+            print("ERROR: " + result.stderr)
+            return None
+        if self._debug:
+            print(f"Elapsed time: {end_time - start_time:.3f} seconds")
+        return result.stdout
+
+
+    def list_android_photos(self, remote_path='/sdcard/DCIM/Camera'):
+        '''
+        List all photos (jpg and mp4) in the specified directory and its subdirectories
+        of an Android device
+        '''
+        result = self.execute_shell_command(f"find {remote_path} -type f -name *.jpg -o -name *.mp4")
+        if not result:
+            print("ERROR: Failed to list photos")
+            return []
+
+        return result.splitlines()  # Return as a list of file paths
+
+
+    def stat_android_photos(self, remote_path='/sdcard/DCIM/Camera'):
+        '''
+        Use stat command to list all photos contained under the specified directory
+        of an Android device and get their size
+        '''
+        result = self.execute_shell_command(f"stat -c %n@%s {remote_path}/*.jpg {remote_path}/*.mp4")
+        if not result:
+            print("ERROR: Failed to stat photos")
+            return []
+        files_and_sizes = [tuple(line.split('@')) for line in result.splitlines()]
+        return files_and_sizes  # Return as a list of tuples (filename, size_in_bytes)
+
+
+    def copy_file_from_android(self, src, dst):
+        '''Copy the specified src file from the Android device to the dst directory'''
+        command = ['adb', 'pull', src, dst]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            print("ERROR: " + result.stderr)
 
 #-------------------------------------------------------------------------------
 
